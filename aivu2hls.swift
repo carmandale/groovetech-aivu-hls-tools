@@ -11,6 +11,7 @@ struct Config {
     let bitrates: [Int]
     let layout: String
     let videoRange: String
+    let contentType: String
 }
 
 enum CLIError: Error, CustomStringConvertible {
@@ -80,6 +81,11 @@ struct RuntimeError: Error, CustomStringConvertible {
     var description: String { message }
 }
 
+func escapePlaylistAttribute(_ value: String) -> String {
+    let escapedBackslashes = value.replacingOccurrences(of: "\\", with: "\\\\")
+    return escapedBackslashes.replacingOccurrences(of: "\"", with: "\\\"")
+}
+
 func which(_ tool: String) -> String? {
     do {
         let result = try runProcess(path: "/usr/bin/which", arguments: [tool], printCommand: false)
@@ -111,6 +117,7 @@ func parseArguments() throws -> Config {
     var bitrates: [Int] = [25_000_000, 50_000_000, 100_000_000]
     var layout = "CH=STEREO/PROJ=AIV"
     var videoRange = "PQ"
+    var contentType = "Fully Immersive"
 
     var iterator = CommandLine.arguments.dropFirst().makeIterator()
 
@@ -141,6 +148,9 @@ func parseArguments() throws -> Config {
         case "--video-range":
             guard let value = iterator.next() else { throw CLIError.missingValue(flag: arg) }
             videoRange = value
+        case "--content-type":
+            guard let value = iterator.next() else { throw CLIError.missingValue(flag: arg) }
+            contentType = value
         case "-h", "--help":
             printUsage()
             exit(0)
@@ -203,7 +213,8 @@ func parseArguments() throws -> Config {
         segmentDuration: segmentDuration,
         bitrates: bitrates,
         layout: layout,
-        videoRange: videoRange
+        videoRange: videoRange,
+        contentType: contentType
     )
 }
 
@@ -222,7 +233,8 @@ func printUsage() {
                                default: 25000000,50000000,100000000
       --aime <path>            Venue AIME file to copy alongside playlists
       --layout <string>        REQ-VIDEO-LAYOUT value (default: CH=STEREO/PROJ=AIV)
-      --video-range <value>    VIDEO-RANGE attribute (default: PQ)
+      --video-range <value>    Variant VIDEO-RANGE attribute (default: PQ)
+      --content-type <value>   Session DATA com.apple.private.content-type (default: Fully Immersive)
       -h, --help               Show this help text
 
     The tool prefers Apple's HLS authoring utilities when installed;
@@ -336,7 +348,14 @@ func buildMasterPlaylist(variants: [String], config: Config) throws -> URL {
             try FileManager.default.removeItem(at: destination)
         }
         try FileManager.default.copyItem(at: aimeURL, to: destination)
-        lines.append("#EXT-X-IMMERSIVE-VIDEO:URI=\"\(aimeURL.lastPathComponent)\"")
+        let escapedVenue = escapePlaylistAttribute(aimeURL.lastPathComponent)
+        lines.append("#EXT-X-SESSION-DATA:DATA-ID=\"com.apple.hls.venue-description\",URI=\"\(escapedVenue)\"")
+        lines.append("#EXT-X-IMMERSIVE-VIDEO:URI=\"\(escapedVenue)\"")
+    }
+
+    if !config.contentType.isEmpty {
+        let escapedContentType = escapePlaylistAttribute(config.contentType)
+        lines.append("#EXT-X-SESSION-DATA:DATA-ID=\"com.apple.private.content-type\",VALUE=\"\(escapedContentType)\"")
     }
 
     if variants.count != config.bitrates.count {
@@ -347,7 +366,8 @@ func buildMasterPlaylist(variants: [String], config: Config) throws -> URL {
         var attributes: [String] = []
         attributes.append("BANDWIDTH=\(config.bitrates[index])")
         attributes.append("AVERAGE-BANDWIDTH=\(config.bitrates[index])")
-        attributes.append("REQ-VIDEO-LAYOUT=\"\(config.layout)\"")
+        let escapedLayout = escapePlaylistAttribute(config.layout)
+        attributes.append("REQ-VIDEO-LAYOUT=\"\(escapedLayout)\"")
         attributes.append("VIDEO-RANGE=\(config.videoRange)")
         lines.append("#EXT-X-STREAM-INF:\(attributes.joined(separator: ","))")
         lines.append(variant)

@@ -36,6 +36,7 @@ Key flags:
 - `--aime` – Optional AIME venue file copied alongside playlists
 - `--layout` – `REQ-VIDEO-LAYOUT` value (default `CH=STEREO/PROJ=AIV`)
 - `--video-range` – Variant `VIDEO-RANGE` attribute (default `PQ`)
+- `--content-type` – Session data `com.apple.private.content-type` value (default `Fully Immersive`)
 
 The script cleans the output directory before writing, generates variants, patches the master playlist (`#EXT-X-VERSION:12`, `REQ-VIDEO-LAYOUT`, optional `#EXT-X-IMMERSIVE-VIDEO`, `VIDEO-RANGE`), and invokes `mediastreamvalidator` when present.
 
