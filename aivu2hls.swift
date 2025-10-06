@@ -14,6 +14,14 @@ struct Config {
     let contentType: String
 }
 
+struct PlaylistMetadata {
+    let resolution: String?
+    let frameRate: String?
+    let codecs: String?
+    let averageBitrate: Int?
+    let peakBitrate: Int?
+}
+
 enum CLIError: Error, CustomStringConvertible {
     case missingValue(flag: String)
     case missingRequired(String)
@@ -115,7 +123,7 @@ func parseArguments() throws -> Config {
     var aimePath: String?
     var segmentDuration: Double = 6.0
     var bitrates: [Int] = [25_000_000, 50_000_000, 100_000_000]
-    var layout = "CH=STEREO/PROJ=AIV"
+    var layout = "CH-STEREO/PACK-NONE/PROJ-AIV"
     var videoRange = "PQ"
     var contentType = "Fully Immersive"
 
@@ -232,7 +240,7 @@ func printUsage() {
       -r, --bitrates <list>    Comma-separated BANDWIDTH values (bps)
                                default: 25000000,50000000,100000000
       --aime <path>            Venue AIME file to copy alongside playlists
-      --layout <string>        REQ-VIDEO-LAYOUT value (default: CH=STEREO/PROJ=AIV)
+      --layout <string>        REQ-VIDEO-LAYOUT value (default: CH-STEREO/PACK-NONE/PROJ-AIV)
       --video-range <value>    Variant VIDEO-RANGE attribute (default: PQ)
       --content-type <value>   Session DATA com.apple.private.content-type (default: Fully Immersive)
       -h, --help               Show this help text
@@ -254,9 +262,148 @@ func cleanOutputDirectory(_ url: URL) throws {
     }
 }
 
+func formatDecimal(_ value: Double, precision: Int = 3) -> String {
+    let formatString = String(format: "%%.%df", precision)
+    var string = String(format: formatString, value)
+    while string.contains(".") && (string.last == "0" || string.last == ".") {
+        if string.last == "0" {
+            string.removeLast()
+        } else if string.last == "." {
+            string.removeLast()
+            break
+        }
+    }
+    return string
+}
+
+func formatFrameRate(_ value: Double) -> String {
+    return formatDecimal(value)
+}
+
+func formatSegmentDuration(_ value: Double) -> String {
+    return formatDecimal(value)
+}
+
+func probePlaylistMetadata(for inputURL: URL) -> PlaylistMetadata {
+    guard let ffprobePath = which("ffprobe") else {
+        print("ffprobe not found; skipping metadata probe.")
+        return PlaylistMetadata(resolution: nil, frameRate: nil, codecs: nil, averageBitrate: nil, peakBitrate: nil)
+    }
+
+    do {
+        let result = try runProcess(path: ffprobePath,
+                                    arguments: ["-v", "error",
+                                                "-print_format", "json",
+                                                "-show_streams",
+                                                "-show_format",
+                                                inputURL.path],
+                                    printCommand: false)
+        guard let data = result.stdout.data(using: .utf8) else {
+            return PlaylistMetadata(resolution: nil, frameRate: nil, codecs: nil, averageBitrate: nil, peakBitrate: nil)
+        }
+        let object = try JSONSerialization.jsonObject(with: data, options: [])
+        guard let root = object as? [String: Any],
+              let streams = root["streams"] as? [[String: Any]] else {
+            return PlaylistMetadata(resolution: nil, frameRate: nil, codecs: nil, averageBitrate: nil, peakBitrate: nil)
+        }
+
+        var resolution: String?
+        var frameRate: String?
+        var codecs: [String] = []
+        var averageBitrate: Int?
+        var peakBitrate: Int?
+
+        if let format = root["format"] as? [String: Any] {
+            if let bitRateString = format["bit_rate"] as? String, let bitRateValue = Double(bitRateString) {
+                averageBitrate = Int(bitRateValue.rounded())
+            } else if let bitRateNumber = format["bit_rate"] as? NSNumber {
+                averageBitrate = bitRateNumber.intValue
+            }
+            if let avg = averageBitrate {
+                peakBitrate = Int((Double(avg) * 2.0).rounded())
+            }
+        }
+
+        for stream in streams {
+            guard let codecType = stream["codec_type"] as? String else { continue }
+            if codecType == "video" {
+                if let width = stream["width"] as? Int,
+                   let height = stream["height"] as? Int,
+                   width > 0, height > 0 {
+                    resolution = "\(width)x\(height)"
+                }
+
+                if let avg = stream["avg_frame_rate"] as? String, avg != "0/0" {
+                    let parts = avg.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: true)
+                    if parts.count == 2,
+                       let numerator = Double(parts[0]),
+                       let denominator = Double(parts[1]),
+                       denominator != 0 {
+                        let value = numerator / denominator
+                        frameRate = formatFrameRate(value)
+                    } else if let value = Double(avg) {
+                        frameRate = formatFrameRate(value)
+                    }
+                }
+
+                let codecTag = (stream["codec_tag_string"] as? String)?.lowercased()
+                let codecName = (stream["codec_name"] as? String)?.lowercased()
+                var videoCodec: String?
+                if let tag = codecTag, !tag.isEmpty {
+                    if tag == "hvc1" || tag == "hev1" {
+                        videoCodec = "hvc1"
+                    } else if tag == "avc1" || tag == "avc3" {
+                        videoCodec = "avc1"
+                    } else {
+                        videoCodec = tag
+                    }
+                }
+                if videoCodec == nil, let name = codecName, !name.isEmpty {
+                    if name == "hevc" || name == "h265" {
+                        videoCodec = "hvc1"
+                    } else if name == "h264" || name == "avc" {
+                        videoCodec = "avc1"
+                    } else {
+                        videoCodec = name
+                    }
+                }
+                if let videoCodec {
+                    codecs.append(videoCodec)
+                }
+            } else if codecType == "audio" {
+                let codecTag = (stream["codec_tag_string"] as? String)?.lowercased()
+                let codecName = (stream["codec_name"] as? String)?.lowercased()
+                var audioCodec: String?
+                if let name = codecName {
+                    if name == "aac" {
+                        audioCodec = "mp4a.40.2"
+                    } else if name == "ac3" {
+                        audioCodec = "ac-3"
+                    }
+                }
+                if audioCodec == nil, let tag = codecTag, !tag.isEmpty {
+                    audioCodec = tag
+                }
+                if let audioCodec {
+                    codecs.append(audioCodec)
+                }
+            }
+        }
+
+        let codecString = codecs.isEmpty ? nil : codecs.joined(separator: ",")
+        return PlaylistMetadata(resolution: resolution, frameRate: frameRate, codecs: codecString, averageBitrate: averageBitrate, peakBitrate: peakBitrate)
+    } catch {
+        print("Warning: Unable to probe media metadata: \(error)")
+        return PlaylistMetadata(resolution: nil, frameRate: nil, codecs: nil, averageBitrate: nil, peakBitrate: nil)
+    }
+}
+
 func segmentWithAppleTools(config: Config, mediafilesegmenterPath: String) throws -> URL {
     print("Using Apple mediafilesegmenter.")
-    let arguments = ["-f", config.outputDirectory.path, "-M", String(format: "%.3f", config.segmentDuration), "-B", config.streamName, config.inputURL.path]
+    let arguments = ["-f", config.outputDirectory.path,
+                     "-t", formatSegmentDuration(config.segmentDuration),
+                     "-B", config.streamName,
+                     config.inputURL.path]
     _ = try runProcess(path: mediafilesegmenterPath, arguments: arguments)
     let variantURL = config.outputDirectory.appendingPathComponent("\(config.streamName).m3u8")
     guard FileManager.default.fileExists(atPath: variantURL.path) else {
@@ -283,7 +430,7 @@ func segmentWithFFmpeg(config: Config, ffmpegPath: String) throws -> URL {
                           "-map", "0:a?",
                           "-c:v", "copy",
                           "-c:a", "copy",
-                          "-hls_time", String(format: "%.3f", config.segmentDuration),
+                          "-hls_time", formatSegmentDuration(config.segmentDuration),
                           "-hls_playlist_type", "vod",
                           "-hls_segment_type", "fmp4",
                           "-hls_flags", "independent_segments",
@@ -339,7 +486,7 @@ func duplicateVariantPlaylists(original variantURL: URL, config: Config) throws 
     return playlistNames
 }
 
-func buildMasterPlaylist(variants: [String], config: Config) throws -> URL {
+func buildMasterPlaylist(variants: [String], config: Config, metadata: PlaylistMetadata) throws -> URL {
     var lines: [String] = ["#EXTM3U", "#EXT-X-VERSION:12"]
 
     if let aimeURL = config.aimeURL {
@@ -364,11 +511,30 @@ func buildMasterPlaylist(variants: [String], config: Config) throws -> URL {
 
     for (index, variant) in variants.enumerated() {
         var attributes: [String] = []
-        attributes.append("BANDWIDTH=\(config.bitrates[index])")
-        attributes.append("AVERAGE-BANDWIDTH=\(config.bitrates[index])")
+        let declaredPeak = config.bitrates[index]
+        let computedAverage = metadata.averageBitrate
+        let computedPeak = metadata.peakBitrate
+        let peakBandwidth = max(declaredPeak, computedPeak ?? declaredPeak)
+        var averageBandwidth = computedAverage ?? declaredPeak
+        if averageBandwidth > peakBandwidth {
+            averageBandwidth = peakBandwidth
+        }
+        attributes.append("BANDWIDTH=\(peakBandwidth)")
+        attributes.append("AVERAGE-BANDWIDTH=\(averageBandwidth)")
         let escapedLayout = escapePlaylistAttribute(config.layout)
         attributes.append("REQ-VIDEO-LAYOUT=\"\(escapedLayout)\"")
         attributes.append("VIDEO-RANGE=\(config.videoRange)")
+        if let resolution = metadata.resolution {
+            attributes.append("RESOLUTION=\(resolution)")
+        }
+        if let frameRate = metadata.frameRate {
+            attributes.append("FRAME-RATE=\(frameRate)")
+        }
+        if let codecs = metadata.codecs, !codecs.isEmpty {
+            let escapedCodecs = escapePlaylistAttribute(codecs)
+            attributes.append("CODECS=\"\(escapedCodecs)\"")
+        }
+        attributes.append("CLOSED-CAPTIONS=NONE")
         lines.append("#EXT-X-STREAM-INF:\(attributes.joined(separator: ","))")
         lines.append(variant)
     }
@@ -398,9 +564,19 @@ func main() {
         let config = try parseArguments()
         try cleanOutputDirectory(config.outputDirectory)
 
+        let playlistMetadata = probePlaylistMetadata(for: config.inputURL)
+
         let variantURL: URL
         if let mediafilesegmenterPath = which("mediafilesegmenter") {
-            variantURL = try segmentWithAppleTools(config: config, mediafilesegmenterPath: mediafilesegmenterPath)
+            do {
+                variantURL = try segmentWithAppleTools(config: config, mediafilesegmenterPath: mediafilesegmenterPath)
+            } catch {
+                print("mediafilesegmenter failed: \(error). Falling back to ffmpeg.")
+                guard let ffmpegPath = which("ffmpeg") else {
+                    throw RuntimeError("mediafilesegmenter failed and ffmpeg is unavailable. Cannot produce HLS output.")
+                }
+                variantURL = try segmentWithFFmpeg(config: config, ffmpegPath: ffmpegPath)
+            }
         } else if let ffmpegPath = which("ffmpeg") {
             variantURL = try segmentWithFFmpeg(config: config, ffmpegPath: ffmpegPath)
         } else {
@@ -408,7 +584,7 @@ func main() {
         }
 
         let variants = try duplicateVariantPlaylists(original: variantURL, config: config)
-        let masterURL = try buildMasterPlaylist(variants: variants, config: config)
+        let masterURL = try buildMasterPlaylist(variants: variants, config: config, metadata: playlistMetadata)
         print("Master playlist generated at \(masterURL.path)")
         runValidatorIfAvailable(masterURL: masterURL)
         print("Done.")

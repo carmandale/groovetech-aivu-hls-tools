@@ -1,4 +1,11 @@
 /.DS_Store
 /build/
 /hls_out/
+*.aime
+*.aivu
+*.mp4
+*.m4s
+reference/*.bin
+media/*.plist
+tools/spatial-media/
 *.xcuserstate
