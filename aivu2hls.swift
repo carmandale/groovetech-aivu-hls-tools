@@ -308,7 +308,7 @@ func buildMasterPlaylist(config: Config) async throws {
 	lines.append("")
 	
 	// Session data for venue
-	lines.append("#EXT-X-SESSION-DATA:DATA-ID=\"com.apple.immersive.venue\",URI=\"\(aimeURL.lastPathComponent)\"")
+	lines.append("#EXT-X-SESSION-DATA:DATA-ID=\"com.apple.hls.venue-description\",URI=\"\(aimeURL.lastPathComponent)\"")
 	
 	// Content type
 	let escapedContentType = escapePlaylistAttribute(config.contentType)
