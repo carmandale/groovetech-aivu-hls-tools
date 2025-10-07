@@ -24,9 +24,9 @@ CODEC="${CODEC:-libx264}"
 CRF="${CRF:-18}"
 PRESET="${PRESET:-slow}"
 
-# Fisheye SBS -> Equirect SBS, 90->60fps
+# Fisheye to half-equirect per eye (duplicate single view for CLI symmetric stereo approx), hstack SBS 8640x4320@60fps
 ffmpeg -y -i "$INPUT_AIVU" \
-  -vf "v360=input=fisheye:in_stereo=sbs:output=equirect:out_stereo=sbs:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:w=8640:h=4320,fps=60" \
+  -vf "split=2[L][R]; [L]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Lout]; [R]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Rout]; [Lout][Rout]hstack,fps=60" \
   -c:v "$CODEC" -preset "$PRESET" -crf "$CRF" -pix_fmt yuv420p -movflags +faststart \
   -c:a copy \
   "$SBS_EQUIRECT" || { echo >&2 "FFmpeg remap failed"; exit 1; }

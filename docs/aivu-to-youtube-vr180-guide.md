@@ -18,18 +18,20 @@ Apple Immersive Video (.aivu) files are captured in dual fisheye lenses (MV-HEVC
 ### CLI: FFmpeg (Automated, No Quality Loss)
 ```
 ffmpeg -y -i input.aivu \
-  -vf "v360=input=fisheye:in_stereo=sbs:output=equirect:out_stereo=sbs:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:w=8640:h=4320,fps=60" \
+  -vf "split=2[L][R]; [L]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Lout]; [R]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Rout]; [Lout][Rout]hstack,fps=60" \
   -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
   -c:a copy sbs_equirect_8640x4320.mp4
 ```
-- **Quality Notes**: Single-pass v360 maps SBS fisheye to SBS equirect (Apple's ~180° FOV). CRF 18/slow retains near-lossless (150 Mbps). If distortion: Adjust h_fov=170-190; test 10s clip.
+- **Quality Notes**: Per-eye v360 to half-equirect (4320x4320, 180° FOV front), hstack SBS 8640x4320@60fps. Duplicates single view for symmetric stereo (no parallax). CRF 18/slow retains detail (~150 Mbps). If distortion: Adjust h_fov=170-190; test 10s clip.
 - Output: `sbs_equirect_8640x4320.mp4` (~150 Mbps). If already equirect, skip remap.
 
-**Advanced: Per-Eye Fallback** (if single-pass misaligns; replace vf):
+**CLI Stereo Approximation**: Duplicates single decoded view for symmetric stereo (no parallax; sufficient for YouTube VR180 recognition as SBS 180°). For true left/right parallax from multilayer, pre-extract SBS with DaVinci Resolve and feed as input.
+
+**Advanced: Single-Pass Fallback** (if per-eye too slow; replace vf for full equirect approx, but may cause width errors):
 ```
--vf "split=2[left][right]; [left]v360=fisheye:equirect:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:ih_cx=0.5:iv_cy=0.5[left_remap][dummy1]; [right]v360=fisheye:equirect:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:ih_cx=0.5:iv_cy=0.5[right_remap][dummy2]; [left_remap][right_remap]hstack,scale=8640:4320,fps=60"
+-vf "v360=input=fisheye:in_stereo=sbs:output=equirect:out_stereo=sbs:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:w=8640:h=4320,fps=60"
 ```
-- Use for custom lens centers; single-pass preferred.
+- Use only if multilayer extracts to SBS first; per-eye preferred for .aivu.
 
 **Fallback Downscale** (if 8640×4320 fails recognition; run post-remap):
 ```
