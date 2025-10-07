@@ -11,3 +11,9 @@ tools/spatial-media/
 Apple_Immersive/
 *.xcuserstate
 .claude/settings.local.json
+tools/vargol-spatial-media/
+tools/vargol-spatial-media/**/__pycache__/
+__pycache__/
+*.pyc
+build/
+*.mp4

@@ -17,25 +17,28 @@ Apple Immersive Video (.aivu) files are captured in dual fisheye lenses (MV-HEVC
 
 ### CLI: FFmpeg (Automated, No Quality Loss)
 ```
-ffmpeg -i input.aivu \
-  -vf "split=2[left][right]; \
-       [left]v360=fisheye:equirect:id_fov=180:ih_fov=180:iv_fov=180:yaw=0:pitch=0:roll=0[ih_cx=0.5:iv_cy=0.5][dummy1]; \
-       [right]v360=fisheye:equirect:id_fov=180:ih_fov=180:iv_fov=180:yaw=0:pitch=0:roll=0:ih_cx=0.5:iv_cy=0.5[ih_cx=0.5:iv_cy=0.5][dummy2]; \
-       [left_remap][right_remap]hstack,scale=8640:4320,fps=60" \
-  -c:v libx264 -preset slow -crf 18 -r 60 -pix_fmt yuv420p -b:v 150M \
-  -c:a aac -movflags +faststart sbs_equirect_8640x4320.mp4
+ffmpeg -y -i input.aivu \
+  -vf "v360=input=fisheye:in_stereo=sbs:output=equirect:out_stereo=sbs:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:w=8640:h=4320,fps=60" \
+  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
+  -c:a copy sbs_equirect_8640x4320.mp4
 ```
-- **Quality Notes**: `v360` uses precise fisheye-to-equirect mapping (Apple's ~180° FOV; center offsets ih_cx/iv_cy=0.5 for symmetric lenses). CRF 18/slow preset retains near-lossless detail (150 Mbps). Stereo alignment approximate but sufficient for VR180 (no visible parallax loss in tests). If distortion: Adjust id_fov=170-190; test 10s clip.
-- Output: `sbs_equirect_8640x4320.mp4` (~150 Mbps).
+- **Quality Notes**: Single-pass v360 maps SBS fisheye to SBS equirect (Apple's ~180° FOV). CRF 18/slow retains near-lossless (150 Mbps). If distortion: Adjust h_fov=170-190; test 10s clip.
+- Output: `sbs_equirect_8640x4320.mp4` (~150 Mbps). If already equirect, skip remap.
+
+**Advanced: Per-Eye Fallback** (if single-pass misaligns; replace vf):
+```
+-vf "split=2[left][right]; [left]v360=fisheye:equirect:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:ih_cx=0.5:iv_cy=0.5[left_remap][dummy1]; [right]v360=fisheye:equirect:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:ih_cx=0.5:iv_cy=0.5[right_remap][dummy2]; [left_remap][right_remap]hstack,scale=8640:4320,fps=60"
+```
+- Use for custom lens centers; single-pass preferred.
 
 **Fallback Downscale** (if 8640×4320 fails recognition; run post-remap):
 ```
-ffmpeg -i sbs_equirect_8640x4320.mp4 -vf scale=5760:2880,fps=60 \
+ffmpeg -y -i sbs_equirect_8640x4320.mp4 -vf scale=5760:2880,fps=60 \
   -c:v libx264 -preset slow -crf 18 -b:v 120M -pix_fmt yuv420p -movflags +faststart \
-  sbs_equirect_5760x2880.mp4
+  -c:a copy sbs_equirect_5760x2880.mp4
 ```
 
-**Visual Check**: Play in VLC (Tools > Effects > Video > Advanced > Spherical > Equirectangular). Pan: Seamless 180° view per eye, no fisheye bulge. If already equirect (rare), skip remap.
+**Visual Check**: Play in VLC (Tools > Effects > Video > Advanced > Spherical > Equirectangular). Pan: Seamless 180° view per eye, no fisheye bulge.
 
 ## Step 2: Inject VR180 Metadata
 Use Vargol fork (auto-sets EQUI bounds for 180° crop: left=0.25, right=0.75, top=0, bottom=1).
@@ -49,7 +52,18 @@ Use Vargol fork (auto-sets EQUI bounds for 180° crop: left=0.25, right=0.75, to
    - Auto V2 (SV3D/ST3D/svhd); stereo mode=2 (SBS left-right).
    - Output: `output_vr180.mp4` (same streams, metadata added).
 
-Alternative (if no `--degree`): Omit `--degree 180`—Vargol defaults to full 360° crop; manually add crop if needed (but avoid: `python3 spatialmedia -i -s left-right -m equirectangular --crop 4320:4320:8640:4320:2160:0 ...` for pixel offsets).
+## Makefile Integration
+Use the Makefile to run the workflow:
+
+```
+make youtube MOVIE=Dallas
+# With downscale (5760x2880):
+make youtube MOVIE=Dallas DOWNSCALE=true
+```
+
+- MOVIE: Basename (e.g., Dallas for media/Dallas.aivu).
+- Outputs to build/dallas_vr180/dallas_vr180.mp4.
+- Env vars: CODEC=libx265 CRF=16 PRESET=veryslow for tuning (set before make).
 
 ## Step 3: Verify Metadata Before Upload
 Ensure ST3D (stereo=2), SV3D (layout=1, svhd present), EQUI (bounds 0.25-0.75 horizontal, full vertical). No "missing spherical header".
