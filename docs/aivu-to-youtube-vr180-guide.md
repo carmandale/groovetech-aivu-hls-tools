@@ -12,26 +12,61 @@ Apple Immersive Video (.aivu) files are captured in dual fisheye lenses (MV-HEVC
 
 **Warning**: 90fps → 60fps downsample required (YouTube VR180 max 60fps). Test unlisted first. FFmpeg workflow is fully automated via script below.
 
-## Step 1: Decode and Remap Fisheye to SBS Equirectangular (90fps → 60fps)
-.aivu decodes to SBS fisheye; remap to half-equirectangular per eye (180° diagonal FOV typical for Apple). FFmpeg v360 provides high-quality remapping (preserves detail/parallax; tune FOV if edges warp slightly).
+## Step 1: Extract True Stereo and Remap Fisheye to SBS Equirectangular (90fps → 60fps)
 
-### CLI: FFmpeg (Automated, No Quality Loss)
+**Apple .aivu contains MV-HEVC with true left/right stereo views** (base layer + dependent view differences). FFmpeg's HEVC decoder can reconstruct both views for **true 3D parallax** (not a duplicate). This is the recommended method for authentic stereoscopic depth.
+
+### Method: True Stereo Extraction (Recommended)
+
+**Step 1a: Extract left and right eye views from MV-HEVC**
+```bash
+# Extract left eye (view:0) - no re-encode
+ffmpeg -y -i input.aivu -map 0:v:view:0 -c copy -tag:v hvc1 left_fisheye.mov
+
+# Extract right eye (view:1) - FFmpeg reconstructs from base + differences
+ffmpeg -y -i input.aivu -map 0:v:view:1 -c copy -tag:v hvc1 right_fisheye.mov
 ```
+
+**Step 1b: Convert each eye from fisheye to equirectangular**
+```bash
+# Left eye: fisheye → equirect (4320x4320, 180° FOV, 60fps)
+ffmpeg -y -i left_fisheye.mov \
+  -vf "v360=input=fisheye:output=equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0,fps=60" \
+  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
+  left_equirect_4320x4320.mp4
+
+# Right eye: fisheye → equirect (4320x4320, 180° FOV, 60fps)
+ffmpeg -y -i right_fisheye.mov \
+  -vf "v360=input=fisheye:output=equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0,fps=60" \
+  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
+  right_equirect_4320x4320.mp4
+```
+
+**Step 1c: Stack left and right to side-by-side**
+```bash
+# Hstack with audio from original
+ffmpeg -y -i left_equirect_4320x4320.mp4 -i right_equirect_4320x4320.mp4 -i input.aivu \
+  -filter_complex "[0:v][1:v]hstack[v]" \
+  -map "[v]" -map 2:a? \
+  -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
+  -c:a copy \
+  sbs_equirect_8640x4320.mp4
+```
+
+- **Quality Notes**: True L/R extraction preserves parallax for authentic 3D depth. CRF 18/slow retains detail (~150 Mbps). Each eye is independently remapped for optimal quality.
+- **MV-HEVC Support**: Requires FFmpeg 7.1+ with MV-HEVC decoder support (software decoding, not hardware accelerated).
+- Output: `sbs_equirect_8640x4320.mp4` with **true stereo parallax** (~150-200 Mbps).
+
+### Legacy Method: Symmetric Duplicate (Not Recommended)
+
+**⚠️ This method duplicates a single view and produces NO true stereo/parallax:**
+```bash
 ffmpeg -y -i input.aivu \
-  -vf "split=2[L][R]; [L]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Lout]; [R]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320:yaw=0:pitch=0:roll=0[Rout]; [Lout][Rout]hstack,fps=60" \
+  -vf "split=2[L][R]; [L]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320[Lout]; [R]v360=fisheye:equirect:h_fov=180:v_fov=180:w=4320:h=4320[Rout]; [Lout][Rout]hstack,fps=60" \
   -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart \
   -c:a copy sbs_equirect_8640x4320.mp4
 ```
-- **Quality Notes**: Per-eye v360 to half-equirect (4320x4320, 180° FOV front), hstack SBS 8640x4320@60fps. Duplicates single view for symmetric stereo (no parallax). CRF 18/slow retains detail (~150 Mbps). If distortion: Adjust h_fov=170-190; test 10s clip.
-- Output: `sbs_equirect_8640x4320.mp4` (~150 Mbps). If already equirect, skip remap.
-
-**CLI Stereo Approximation**: Duplicates single decoded view for symmetric stereo (no parallax; sufficient for YouTube VR180 recognition as SBS 180°). For true left/right parallax from multilayer, pre-extract SBS with DaVinci Resolve and feed as input.
-
-**Advanced: Single-Pass Fallback** (if per-eye too slow; replace vf for full equirect approx, but may cause width errors):
-```
--vf "v360=input=fisheye:in_stereo=sbs:output=equirect:out_stereo=sbs:h_fov=180:v_fov=180:yaw=0:pitch=0:roll=0:w=8640:h=4320,fps=60"
-```
-- Use only if multilayer extracts to SBS first; per-eye preferred for .aivu.
+Use only if you don't need true 3D depth or for testing.
 
 **Fallback Downscale** (if 8640×4320 fails recognition; run post-remap):
 ```
