@@ -54,13 +54,19 @@ youtube:
 	@MOVIE_INPUT="media/$(MOVIE).aivu"; \
 	 [ -f "$$MOVIE_INPUT" ] || (echo "Missing $$MOVIE_INPUT. Copy $(MOVIE).aivu into media/." && exit 1); \
 	 MOVIE_LOWER=$$(echo "$(MOVIE)" | tr '[:upper:]' '[:lower:]'); \
-	 YOUTUBE_RAW="$(BUILD_DIR)/$${MOVIE_LOWER}_youtube_raw.mp4"; \
+	 YOUTUBE_RAW="$(BUILD_DIR)/$${MOVIE_LOWER}_youtube_sbs.mp4"; \
 	 YOUTUBE_FINAL="$(BUILD_DIR)/$${MOVIE_LOWER}_youtube.mp4"; \
 	 mkdir -p "$(BUILD_DIR)"; \
-	 ffmpeg -y -i "$$MOVIE_INPUT" -map 0:v:0 -map 0:a? -c copy "$$YOUTUBE_RAW"; \
-	 $(SPATIALMEDIA) -i --v2 --stereo=top-bottom --projection=equirectangular --crop 4320:2160:8640:4320:0:1080 "$$YOUTUBE_RAW" "$$YOUTUBE_FINAL"; \
+	 echo "Converting MV-HEVC to Side-by-Side 60fps for YouTube VR180..."; \
+	 ffmpeg -y -i "$$MOVIE_INPUT" \
+	   -vf "stereo3d=al:sbsl,fps=60" \
+	   -c:v libx264 -preset medium -b:v 80M -maxrate 100M -bufsize 160M -pix_fmt yuv420p \
+	   -c:a aac -b:a 192k \
+	   "$$YOUTUBE_RAW"; \
+	 echo "Injecting VR180 metadata..."; \
+	 $(SPATIALMEDIA) -i --v2 --stereo=left-right --projection=equirectangular --crop 8640:4320:8640:8640:0:2160 "$$YOUTUBE_RAW" "$$YOUTUBE_FINAL"; \
 	 rm -f "$$YOUTUBE_RAW"; \
-	 echo "YouTube-ready clip: $$YOUTUBE_FINAL"
+	 echo "YouTube-ready VR180 clip: $$YOUTUBE_FINAL"
 
 clean:
 	rm -rf "$(BUILD_DIR)"
