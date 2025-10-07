@@ -69,6 +69,42 @@ SEGMENT_DURATION=4 BITRATES=20000000,40000000 make kitten
 
 Apple's `mediastreamvalidator` cannot decode the proprietary binary `.aime` venue payload extracted from `.aivu` files. The validator reports the session-data parse failure as a `CAUTION`, but the `#EXT-X-SESSION-DATA` and `#EXT-X-IMMERSIVE-VIDEO` tags remain correct and Vision Pro ingests the stream successfully. Leave the binary venue reference in place for production playback; only replace it with a JSON stub if you explicitly need a warning-free validation log.
 
+## YouTube VR180 Export
+
+The `.aivu` format uses **MV-HEVC (Multiview HEVC)** encoding – both eyes are encoded in a single 4320×4320 stream using HEVC's multiview extension with frame-alternate stereo packing. YouTube does not support MV-HEVC, so direct stream copying fails.
+
+### Conversion Workflow
+
+The `youtube` Makefile target properly converts MV-HEVC to YouTube's VR180 specification:
+
+```bash
+make youtube MOVIE=Kitten
+```
+
+**What it does:**
+
+1. **Decodes MV-HEVC** frame-alternate stereo using ffmpeg's `stereo3d` filter
+2. **Converts to Side-by-Side layout** (8640×4320) – YouTube's preferred VR180 format
+3. **Downsamples to 60fps** – YouTube's maximum supported framerate (from 90fps source)
+4. **Re-encodes with H.264** at 80 Mbps – YouTube's recommended VR180 bitrate
+5. **Injects v2 metadata** (ST3D + SV3D boxes) with left-right stereo and VR180 crop parameters
+
+**Technical Details:**
+
+- **Input**: MV-HEVC 4320×4320 per eye @ 90fps (frame-alternate)
+- **Filter**: `stereo3d=al:sbsl` (alternating → side-by-side left-first)
+- **Output**: H.264 8640×4320 @ 60fps Side-by-Side
+- **Encoding**: libx264 preset medium, 80Mbps, yuv420p
+- **Metadata**: `--v2 --stereo=left-right --crop 8640:4320:8640:8640:0:2160`
+
+**Why Side-by-Side at 60fps?**
+
+- YouTube recommends Side-by-Side over top-bottom (better bandwidth efficiency)
+- 60fps is YouTube's maximum for VR content; 90fps gets downsampled anyway
+- Pre-converting to 60fps ensures optimal quality and faster processing
+
+**Performance:** Encoding takes ~7-10 minutes per 3-minute video (full re-encode required).
+
 ## Quick Commands
 
 - Convert NoBrainer: `make nobrainer`
