@@ -59,6 +59,7 @@ youtube:
 	 mkdir -p "$(BUILD_DIR)"; \
 	 ffmpeg -y -i "$$MOVIE_INPUT" -map 0:v:0 -map 0:a? -c copy "$$YOUTUBE_RAW"; \
 	 $(SPATIALMEDIA) -i --stereo=top-bottom --projection=equirectangular --crop 4320:2160:4320:4320:0:0 "$$YOUTUBE_RAW" "$$YOUTUBE_FINAL"; \
+	 rm -f "$$YOUTUBE_RAW"; \
 	 echo "YouTube-ready clip: $$YOUTUBE_FINAL"
 
 clean:
