@@ -10,3 +10,4 @@ media/*.plist
 tools/spatial-media/
 Apple_Immersive/
 *.xcuserstate
+.claude/settings.local.json
