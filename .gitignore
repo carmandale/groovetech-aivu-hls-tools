@@ -8,4 +8,5 @@
 reference/*.bin
 media/*.plist
 tools/spatial-media/
+Apple_Immersive/
 *.xcuserstate
