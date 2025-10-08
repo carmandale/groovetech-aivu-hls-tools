@@ -94,8 +94,9 @@ uv pip install -e "$PWD/tools/vargol-spatial-media"
 
 echo "Injecting VR180 metadata..."
 ORIG_DIR="$PWD"
+PYTHON_BIN="$ORIG_DIR/.venv/bin/python3"
 cd "$VARGOL_DIR"
-python3 -m spatialmedia -i -s left-right -m equirectangular --degree 180 "$ORIG_DIR/$INPUT_FOR_META" "$ORIG_DIR/$VR180_OUTPUT" \
+"$PYTHON_BIN" -m spatialmedia -i -s left-right -m equirectangular --degree 180 "$ORIG_DIR/$INPUT_FOR_META" "$ORIG_DIR/$VR180_OUTPUT" \
   || { echo >&2 "Metadata injection failed"; cd "$ORIG_DIR"; exit 1; }
 cd "$ORIG_DIR"
 
