@@ -1,7 +1,9 @@
 # VR180 YouTube Conversion - Status Report
 
 **Date**: October 8, 2025  
-**Status**: ✅ **RESOLVED** - Script fixed, metadata injection working, test file ready
+**Status**: ✅ **RESOLVED** - Script fixed, metadata injection working, test files ready
+
+**📖 For detailed explanation of VR180 metadata and resolution requirements, see [VR180 Metadata Guide](docs/VR180_METADATA_GUIDE.md)**
 
 ## Problem Identified
 

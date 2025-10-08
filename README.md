@@ -71,39 +71,53 @@ Apple's `mediastreamvalidator` cannot decode the proprietary binary `.aime` venu
 
 ## YouTube VR180 Export
 
-The `.aivu` format uses **MV-HEVC (Multiview HEVC)** encoding – both eyes are encoded in a single 4320×4320 stream using HEVC's multiview extension with frame-alternate stereo packing. YouTube does not support MV-HEVC, so direct stream copying fails.
+The `.aivu` format uses **MV-HEVC (Multiview HEVC)** encoding with true stereo views (base layer + dependent view). YouTube does not support MV-HEVC, so conversion is required.
+
+### Quick Start
+
+```bash
+# Via Makefile (recommended)
+make youtube MOVIE=Kitten
+
+# Or directly via script
+./tools/aivu_to_vr180.sh media/Kitten.aivu build/kitten_vr180 true
+```
 
 ### Conversion Workflow
 
-The `youtube` Makefile target properly converts MV-HEVC to YouTube's VR180 specification:
+The script (`tools/aivu_to_vr180.sh`) performs true stereo VR180 conversion:
 
-```bash
-make youtube MOVIE=Kitten
-```
+1. **Extracts true stereo views** from MV-HEVC (view:0 left, view:1 right)
+2. **Converts each eye** from fisheye to equirectangular (4320×4320 per eye)
+3. **Stacks side-by-side** (8640×4320 SBS) preserving parallax depth
+4. **Downscales to 5760×2880** (default, for YouTube compatibility)
+5. **Downsamples to 60fps** (YouTube's maximum VR framerate)
+6. **Injects VR180 metadata** (ST3D + SV3D boxes with EQUI bounds)
 
-**What it does:**
+**Key Features:**
 
-1. **Decodes MV-HEVC** frame-alternate stereo using ffmpeg's `stereo3d` filter
-2. **Converts to Side-by-Side layout** (8640×4320) – YouTube's preferred VR180 format
-3. **Downsamples to 60fps** – YouTube's maximum supported framerate (from 90fps source)
-4. **Re-encodes with H.264** at 80 Mbps – YouTube's recommended VR180 bitrate
-5. **Injects v2 metadata** (ST3D + SV3D boxes) with left-right stereo and VR180 crop parameters
+- **True Stereo**: Extracts separate left/right views for authentic 3D depth (not duplicated)
+- **YouTube Optimized**: Defaults to 5760×2880 resolution for reliable VR recognition
+- **Automatic Metadata**: Injects proper VR180 atoms (st3d, sv3d) with correct EQUI bounds (0.25-0.75)
+- **Verification**: Validates metadata with ffprobe and optionally Bento4
 
-**Technical Details:**
+### Technical Details
 
-- **Input**: MV-HEVC 4320×4320 per eye @ 90fps (frame-alternate)
-- **Filter**: `stereo3d=al:sbsl` (alternating → side-by-side left-first)
-- **Output**: H.264 8640×4320 @ 60fps Side-by-Side
-- **Encoding**: libx264 preset medium, 80Mbps, yuv420p
-- **Metadata**: `--v2 --stereo=left-right --crop 8640:4320:8640:8640:0:2160`
+- **Input**: MV-HEVC 4320×4320 per eye @ 90fps (multilayer)
+- **Extraction**: FFmpeg `-map 0:v:view:0` and `-map 0:v:view:1` for true stereo
+- **Projection**: `v360=fisheye:equirect:h_fov=180:v_fov=180` per eye
+- **Output**: H.264 5760×2880 @ 60fps Side-by-Side (2880×2880 per eye)
+- **Encoding**: libx264 preset slow, CRF 18, yuv420p, ~40 Mbps
+- **Metadata**: Vargol spatial-media with `--degree 180` for proper VR180 bounds
 
-**Why Side-by-Side at 60fps?**
+**Performance:** 
+- Kitten (25 sec): ~10 minutes
+- NoBrainer (2:49): ~90-120 minutes
 
-- YouTube recommends Side-by-Side over top-bottom (better bandwidth efficiency)
-- 60fps is YouTube's maximum for VR content; 90fps gets downsampled anyway
-- Pre-converting to 60fps ensures optimal quality and faster processing
-
-**Performance:** Encoding takes ~7-10 minutes per 3-minute video (full re-encode required).
+**Documentation:**
+- [VR180 Metadata Guide](docs/VR180_METADATA_GUIDE.md) - Detailed metadata explanation
+- [YouTube VR180 Guide](docs/aivu-to-youtube-vr180-guide.md) - Complete workflow
+- [VR180 Status](VR180_STATUS.md) - Recent fixes and testing
 
 ## Quick Commands
 
